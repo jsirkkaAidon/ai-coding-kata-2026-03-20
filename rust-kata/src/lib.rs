@@ -14,60 +14,79 @@ pub fn calculate_total_cents(order: &Order) -> i32 {
     let coupon = safe(&order.coupon_code);
 
     let mut discount_percent = 0;
-
-    if customer_type == "vip" {
-        discount_percent += 15;
-    } else if customer_type == "premium" {
-        if subtotal >= 10000 {
-            discount_percent += 10;
-        } else {
-            discount_percent += 5;
-        }
-    } else if customer_type == "employee" {
-        discount_percent += 30;
-    } else if customer_type == "regular" || customer_type == "new" {
-        discount_percent += 0;
-    } else {
-        discount_percent += 0;
-    }
-
-    if coupon == "SAVE10" {
-        if subtotal >= 5000 {
-            discount_percent += 10;
-        }
-    } else if coupon == "VIPONLY" {
-        if customer_type == "vip" {
-            discount_percent += 5;
-        }
-    } else if coupon == "BULK" {
-        if subtotal >= 20000 {
-            discount_percent += 7;
-        }
-    }
-
-    if order.black_friday {
-        if customer_type != "employee" {
-            discount_percent += 5;
-        }
-    }
-
-    if discount_percent > 40 {
-        discount_percent = 40;
-    }
+    discount_percent += base_discount_percent(&customer_type, subtotal);
+    discount_percent += coupon_discount_percent(&coupon, &customer_type, subtotal);
+    discount_percent += black_friday_discount_percent(order.black_friday, &customer_type);
+    discount_percent = discount_percent.min(40);
 
     let discounted_subtotal = subtotal * (100 - discount_percent) / 100;
+    let shipping_cents = shipping_cents(
+        &country,
+        &coupon,
+        &customer_type,
+        discounted_subtotal,
+        order.black_friday,
+    );
+    let tax_percent = tax_percent(&country, &coupon, &customer_type);
 
-    let mut shipping_cents = if country == "IT" {
-        700
-    } else if country == "DE" {
-        900
-    } else if country == "US" {
-        1500
+    let tax_cents = discounted_subtotal * tax_percent / 100;
+    let total = discounted_subtotal + shipping_cents + tax_cents;
+
+    if total < 0 { 0 } else { total }
+}
+
+fn base_discount_percent(customer_type: &str, subtotal: i32) -> i32 {
+    if customer_type == "vip" {
+        15
+    } else if customer_type == "premium" {
+        if subtotal >= 10000 { 10 } else { 5 }
+    } else if customer_type == "employee" {
+        30
+    } else if customer_type == "partner" {
+        12
     } else {
-        2500
-    };
+        0
+    }
+}
 
-    if order.black_friday && country == "US" {
+fn coupon_discount_percent(coupon: &str, customer_type: &str, subtotal: i32) -> i32 {
+    if coupon == "SAVE10" {
+        if subtotal >= 5000 { 10 } else { 0 }
+    } else if coupon == "VIPONLY" {
+        if customer_type == "vip" { 5 } else { 0 }
+    } else if coupon == "BULK" {
+        if subtotal >= 20000 { 7 } else { 0 }
+    } else if coupon == "PARTNER5" {
+        if customer_type == "partner" && subtotal >= 12000 {
+            5
+        } else {
+            0
+        }
+    } else {
+        0
+    }
+}
+
+fn black_friday_discount_percent(black_friday: bool, customer_type: &str) -> i32 {
+    if !black_friday || customer_type == "employee" {
+        0
+    } else if customer_type == "partner" {
+        3
+    } else {
+        5
+    }
+}
+
+fn shipping_cents(
+    country: &str,
+    coupon: &str,
+    customer_type: &str,
+    discounted_subtotal: i32,
+    black_friday: bool,
+) -> i32 {
+    let mut shipping_cents = base_shipping_cents(country);
+
+    if black_friday && country == "US" {
         shipping_cents += 300;
     }
 
@@ -83,10 +102,30 @@ pub fn calculate_total_cents(order: &Order) -> i32 {
         shipping_cents = 0;
     }
 
+    if customer_type == "partner" && discounted_subtotal >= 15000 {
+        shipping_cents = 0;
+    }
+
     if customer_type == "employee" && country != "IT" {
         shipping_cents += 500;
     }
 
+    shipping_cents
+}
+
+fn base_shipping_cents(country: &str) -> i32 {
+    if country == "IT" {
+        700
+    } else if country == "DE" {
+        900
+    } else if country == "US" {
+        1500
+    } else {
+        2500
+    }
+}
+
+fn tax_percent(country: &str, coupon: &str, customer_type: &str) -> i32 {
     let mut tax_percent = if country == "IT" {
         22
     } else if country == "DE" {
@@ -105,12 +144,12 @@ pub fn calculate_total_cents(order: &Order) -> i32 {
         tax_percent = 0;
     }
 
-    let tax_cents = discounted_subtotal * tax_percent / 100;
-    let total = discounted_subtotal + shipping_cents + tax_cents;
-
-    if total < 0 { 0 } else { total }
+    tax_percent
 }
 
 fn safe(value: &str) -> String {
     value.trim().to_string()
 }
+
+#[cfg(test)]
+mod tests;
